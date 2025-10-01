@@ -1,8 +1,11 @@
-import 'package:flutter/material.dart';
-import 'package:news_app/api/api.dart';
-import 'package:news_app/screen/detail_screen.dart';
+import 'dart:async';
+import 'dart:math'; // **IMPORT BARU** untuk fungsi acak
 
+import 'package:flutter/material.dart';
+import 'package:news_app/api/api.dart'; // Asumsikan API ini mengembalikan List<Map<String, dynamic>>
+import 'package:news_app/screen/detail_screen.dart'; // Asumsikan DetailScreen ada
 import 'package:intl/intl.dart';
+import 'package:get/get.dart';
 
 class ScreenApi extends StatefulWidget {
   const ScreenApi({super.key});
@@ -12,69 +15,116 @@ class ScreenApi extends StatefulWidget {
 }
 
 class _ScreenApiState extends State<ScreenApi> {
-  String _selectedCategory = '';
+  final _selectedCategory = ''.obs;
 
-  TextEditingController _searchController = TextEditingController();
-  List<Map<String, dynamic>> _allNews = [];
-  List<Map<String, dynamic>> _filterNews = [];
-  bool isLoading = false;
+  final _allNews = <Map<String, dynamic>>[].obs;
+  final _filterNews = <Map<String, dynamic>>[].obs;
+  final _topNews = <Map<String, dynamic>>[].obs;
+  final isLoading = false.obs;
+  final _pageController = PageController().obs;
+  final _timer = Timer.periodic(Duration.zero, (e) {}).obs;
+
+  final _currentPage = 0.obs;
+  final isBookmarked = false.obs;
 
   Future<void> fetchNews(String type) async {
-    setState(() {
-      isLoading = true;
-    });
+    isLoading.value = true;
+    _filterNews.clear();
+    _topNews.clear();
 
     final data = await Api().getApi(category: type);
-    setState(() {
-      _allNews = data;
-      _filterNews = data;
-      isLoading = false;
-    });
-  }
 
-  _applySearch(String query) {
-    if (query.isEmpty) {
-      setState(() {
-        _filterNews = _allNews;
-      });
+    // **LOGIKA PENGACAKAN BARU:**
+    if (data.isNotEmpty) {
+      // 1. Buat salinan data agar data asli (_allNews) tidak terpengaruh
+      List<Map<String, dynamic>> shuffledData = List.from(data);
+
+      // 2. Acak data
+      shuffledData.shuffle(Random());
+
+      // 3. Ambil hingga 5 item pertama dari hasil pengacakan
+      // Cek apakah data cukup, jika kurang dari 5, ambil semua.
+      int count = min(5, shuffledData.length);
+      _topNews.value = shuffledData.take(count).toList();
     } else {
-      setState(() {
-        _filterNews = _allNews.where((item) {
-          final title = item['title'].toString().toLowerCase();
-          final snippet = item['contentSnippet'].toString().toLowerCase();
-          final search = query.toLowerCase();
-          return title.contains(search) || snippet.contains(search);
-        }).toList();
-      });
+      _topNews.clear();
     }
+    // Sisa logika tetap sama
+    _allNews.value = data;
+    _filterNews.value = data;
+    isLoading.value = false;
   }
 
   @override
   void initState() {
     super.initState();
-    fetchNews(_selectedCategory);
-    _searchController.addListener(() {
-      _applySearch(_searchController.text);
+
+    _pageController.value = PageController(initialPage: 0);
+
+    _timer.value = Timer.periodic(Duration.zero, (t) {});
+
+    fetchNews('');
+
+    _startAutoScroll();
+  }
+
+  @override
+  void dispose() {
+    // **PENTING**: Batalkan timer
+    if (_timer.value.isActive) {
+      _timer.value.cancel();
+    }
+    _pageController.value.dispose();
+    super.dispose();
+  }
+
+  void _startAutoScroll() {
+    // Batalkan timer yang mungkin aktif sebelumnya
+    if (_timer.value.isActive) {
+      _timer.value.cancel();
+    }
+
+    _timer.value = Timer.periodic(Duration(seconds: 3), (Timer timer) {
+      // Pastikan _topNews ada isinya sebelum mencoba menggeser
+      if (_topNews.isNotEmpty) {
+        if (_currentPage.value < _topNews.length - 1) {
+          _currentPage.value++;
+        } else {
+          _currentPage.value = 0;
+        }
+
+        if (_pageController.value.hasClients) {
+          _pageController.value.animateToPage(
+            _currentPage.value,
+            duration: Duration(milliseconds: 2000),
+            curve: Curves.easeIn,
+          );
+        }
+      }
     });
   }
 
+  // Bungkus ElevatedButton dengan Obx untuk reaktivitas warna tombol
   Widget categoryButton(String label, String category) {
-    return ElevatedButton(
-      style: ElevatedButton.styleFrom(
-        backgroundColor: _selectedCategory == category
-            ? Colors.blue
-            : Colors.grey[100],
-        foregroundColor: _selectedCategory == category
-            ? Colors.white
-            : Colors.black,
+    return Obx(
+      () => ElevatedButton(
+        style: ElevatedButton.styleFrom(
+          backgroundColor: _selectedCategory.value == category
+              ? Colors.blue
+              : Colors.grey[100],
+          foregroundColor: _selectedCategory.value == category
+              ? Colors.white
+              : Colors.black,
+        ),
+        onPressed: () {
+          _selectedCategory.value = category;
+          fetchNews(category);
+          // Mulai ulang auto-scroll ketika kategori berubah dan data baru dimuat
+          // untuk memastikan timer menggunakan _topNews yang baru.
+          _startAutoScroll();
+        },
+        child: Text(label),
       ),
-      onPressed: () {
-        setState(() {
-          _selectedCategory = category;
-        });
-        fetchNews(category);
-      },
-      child: Text(label),
     );
   }
 
@@ -83,186 +133,262 @@ class _ScreenApiState extends State<ScreenApi> {
     return DateFormat('dd MM yyyy, HH:mm').format(dateTime);
   }
 
-  bool isBoomarked = false;
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         centerTitle: true,
-        title: Text('News App', style: TextStyle(fontWeight: FontWeight.bold)),
+        title: Text(
+          'BARKING NEWS',
+          style: TextStyle(fontWeight: FontWeight.bold),
+        ),
       ),
-      body: Column(
-        children: [
-          Padding(
-            padding: EdgeInsets.symmetric(vertical: 8.0, horizontal: 16.0),
-            child: TextField(
-              controller: _searchController,
-              decoration: InputDecoration(
-                prefixIcon: Icon(
-                  Icons.search,
-                  color: Colors.grey[500],
-                  size: 28,
-                ),
-                hintText: 'Search news...',
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(16.0),
+      // *PENTING: Bungkus semua konten dinamis yang menggunakan .obs dengan Obx*
+      body: Obx(
+        () => CustomScrollView(
+          slivers: [
+            // Top News Slider
+            SliverToBoxAdapter(
+              // Obx di sini agar diperbarui saat _topNews.isNotEmpty berubah
+              child: (_topNews.isNotEmpty)
+                  ? Container(
+                      padding: EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 8,
+                      ),
+                      height: 200,
+                      decoration: BoxDecoration(
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.6),
+                            blurRadius: 8,
+                            offset: Offset(0, 4),
+                          ),
+                        ],
+                      ),
+                      child: PageView.builder(
+                        controller: _pageController.value,
+                        itemCount: _topNews.length,
+                        onPageChanged: (index) {
+                          // Update _currentPage saat pengguna menggeser secara manual
+                          _currentPage.value = index;
+                        },
+                        itemBuilder: (context, index) {
+                          final item = _topNews[index];
+                          return GestureDetector(
+                            onTap: () {
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (_) =>
+                                      DetailScreen(newsDetail: item),
+                                ),
+                              );
+                            },
+                            child: Hero(
+                              // Tambahkan index ke tag untuk memastikan keunikan
+                              // karena item['title'] mungkin tidak unik jika diambil acak.
+                              // Walaupun item['title'] mungkin sudah cukup unik, ini praktik yang lebih aman.
+                              tag: 'top_news_${item['title']}_$index',
+                              child: Stack(
+                                fit: StackFit.expand,
+                                children: [
+                                  ClipRRect(
+                                    borderRadius: BorderRadius.circular(16.0),
+                                    child: Image.network(
+                                      item['image']['small'],
+                                      fit: BoxFit.cover,
+                                    ),
+                                  ),
+                                  Container(
+                                    decoration: BoxDecoration(
+                                      borderRadius: BorderRadius.circular(16.0),
+                                      gradient: LinearGradient(
+                                        begin: Alignment.bottomCenter,
+                                        end: Alignment.topCenter,
+                                        colors: [
+                                          Colors.black.withOpacity(0.7),
+                                          Colors.transparent,
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                  Positioned(
+                                    bottom: 16,
+                                    left: 16,
+                                    right: 16,
+                                    child: Text(
+                                      item['title'],
+                                      style: TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 18,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                      maxLines: 2,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                    )
+                  : SizedBox.shrink(),
+            ),
+
+            // Bagian 'Recommendation'
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                child: Text(
+                  'Recommendation',
+                  style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
                 ),
               ),
             ),
-          ),
 
-          SingleChildScrollView(
-            padding: EdgeInsets.all(10),
-            scrollDirection: Axis.horizontal,
-            child: Row(
-              children: [
-                categoryButton('semua', ''),
-                SizedBox(width: 10),
-                categoryButton('nasional', 'nasional'),
-                SizedBox(width: 10),
-                categoryButton('internasional', 'internasional'),
-                SizedBox(width: 10),
-                categoryButton('ekonomi', 'ekonomi'),
-                SizedBox(width: 10),
-                categoryButton('olahraga', 'olahraga'),
-                SizedBox(width: 10),
-                categoryButton('teknologi', 'teknologi'),
-                SizedBox(width: 10),
-                categoryButton('hiburan', 'hiburan'),
-                SizedBox(width: 10),
-                categoryButton('gaya-hidup', 'gaya-hidup'),
-              ],
+            // Category Buttons List
+            SliverToBoxAdapter(
+              child: SizedBox(
+                height: 45,
+                child: ListView(
+                  shrinkWrap: true,
+                  scrollDirection: Axis.horizontal,
+                  padding: const EdgeInsets.symmetric(horizontal: 10),
+                  // categoryButton sudah dibungkus dengan Obx
+                  children: [
+                    categoryButton('semua', ''),
+                    const SizedBox(width: 10),
+                    categoryButton('nasional', 'nasional'),
+                    const SizedBox(width: 10),
+                    categoryButton('internasional', 'internasional'),
+                    const SizedBox(width: 10),
+                    categoryButton('ekonomi', 'ekonomi'),
+                    const SizedBox(width: 10),
+                    categoryButton('olahraga', 'olahraga'),
+                    const SizedBox(width: 10),
+                    categoryButton('teknologi', 'teknologi'),
+                    const SizedBox(width: 10),
+                    categoryButton('hiburan', 'hiburan'),
+                    const SizedBox(width: 10),
+                    categoryButton('gaya-hidup', 'gaya-hidup'),
+                  ],
+                ),
+              ),
             ),
-          ),
-          
-          Expanded(
-            child: isLoading
-                ? Center(child: CircularProgressIndicator())
-                : _filterNews.isEmpty
-                ? Center(child: Text('No news Found'))
-                : Padding(
-                    padding: EdgeInsets.all(8.0),
-                    child: ListView.builder(
-                      itemCount: _filterNews.length,
-                      itemBuilder: (context, index) {
-                        final item = _filterNews[index];
-                        return GestureDetector(
-                          onTap: () {
-                            Navigator.push(
-                              context,
-                              PageRouteBuilder(
-                                transitionDuration: const Duration(
-                                  milliseconds: 750,
-                                ), // atur durasi animasi
-                                reverseTransitionDuration: const Duration(
-                                  milliseconds: 750,
-                                ), // balik juga
-                                pageBuilder:
-                                    (context, animation, secondaryAnimation) =>
-                                        DetailScreen(newsDetail: item),
-                              ),
-                            );
-                            
-                          },
-                          
-                          child: Hero(
-                            tag: item['title'],
-                            child: Card(
-                              margin: EdgeInsets.only(bottom: 16.0),
-                              elevation: 2.0,
-                              shadowColor: Colors.black.withOpacity(0.1),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                              child: Padding(
-                                padding: EdgeInsets.all(12.0),
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    ClipRRect(
-                                      borderRadius: BorderRadius.circular(16.0),
 
-                                      child: Image.network(
-                                        item['image']['small'],
-                                        height: 180,
-                                        width: double.infinity,
-                                        fit: BoxFit.cover,
-                                      ),
-                                    ),
-                                    SizedBox(height: 12),
-
-                                    Row(
-                                      children: [
-                                        Expanded(
-                                          child: Text(
-                                            item['link'],
-                                            overflow: TextOverflow.ellipsis,
-                                            style: TextStyle(
-                                              color: Colors.grey[600],
-                                              fontSize: 12,
-                                              fontWeight: FontWeight.bold,
-                                            ),
-                                          ),
-                                        ),
-                                        Spacer(),
-                                        IconButton(
-                                          onPressed: () {
-                                            setState(() {
-                                              isBoomarked = !isBoomarked;
-                                            });
-                                          },
-                                          icon: Icon(
-                                            isBoomarked
-                                                ? Icons.bookmark
-                                                : Icons.bookmark_border,
-                                          ),
-                                          constraints: BoxConstraints(),
-                                          padding: EdgeInsets.zero,
-                                        ),
-                                      ],
-                                    ),
-                                    SizedBox(height: 8),
-
-                                    Text(
-                                      item['title'],
-                                      style: TextStyle(
-                                        fontWeight: FontWeight.bold,
-                                        fontSize: 18,
-                                      ),
-                                      maxLines: 2,
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                    SizedBox(height: 2),
-
-                                    Text(
-                                      item['contentSnippet'],
-                                      style: TextStyle(
-                                        fontWeight: FontWeight.normal,
-                                        fontSize: 14,
-                                      ),
-                                      maxLines: 2,
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                    SizedBox(height: 12),
-
-                                    Text(
-                                      formatDate(item['isoDate']),
-                                      style: TextStyle(
-                                        fontSize: 12,
-                                        color: Colors.grey,
-                                      ),
-                                    ),
-                                  ],
+            // Berita Utama (Loading, No News, atau List)
+            if (isLoading.value)
+              SliverFillRemaining(
+                child: Center(child: CircularProgressIndicator()),
+              )
+            else if (_filterNews.isEmpty)
+              SliverFillRemaining(child: Center(child: Text('No news Found')))
+            else
+              SliverList(
+                delegate: SliverChildBuilderDelegate((context, index) {
+                  final item = _filterNews[index];
+                  return GestureDetector(
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => DetailScreen(newsDetail: item),
+                        ),
+                      );
+                    },
+                    child: Hero(
+                      // Tag Hero di sini HARUS unik untuk setiap item di daftar
+                      tag: 'news_item_${item['title']}_$index',
+                      child: Card(
+                        margin: EdgeInsets.all(8.0),
+                        elevation: 2.0,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Padding(
+                          padding: EdgeInsets.all(12.0),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              ClipRRect(
+                                borderRadius: BorderRadius.circular(16.0),
+                                child: Image.network(
+                                  item['image']['small'],
+                                  height: 180,
+                                  width: double.infinity,
+                                  fit: BoxFit.cover,
                                 ),
                               ),
-                            ),
+                              SizedBox(height: 12),
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: Text(
+                                      item['link'],
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        color: Colors.grey[600],
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                  ),
+                                  Spacer(),
+                                  // Obx di sini agar icon bookmark diperbarui
+                                  Obx(
+                                    () => IconButton(
+                                      onPressed: () {
+                                        // Catatan: isBookmarked ini masih global
+                                        isBookmarked.value =
+                                            !isBookmarked.value;
+                                      },
+                                      icon: Icon(
+                                        isBookmarked.value
+                                            ? Icons.bookmark
+                                            : Icons.bookmark_border,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              SizedBox(height: 8),
+                              Text(
+                                item['title'],
+                                style: TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 18,
+                                ),
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              SizedBox(height: 2),
+                              Text(
+                                item['contentSnippet'],
+                                style: TextStyle(fontSize: 14),
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              SizedBox(height: 12),
+                              Text(
+                                formatDate(item['isoDate']),
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: Colors.grey,
+                                ),
+                              ),
+                            ],
                           ),
-                        );
-                      },
+                        ),
+                      ),
                     ),
-                  ),
-          ),
-        ],
+                  );
+                }, childCount: _filterNews.length),
+              ),
+          ],
+        ),
       ),
     );
   }

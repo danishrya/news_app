@@ -3,6 +3,7 @@ import 'package:curved_navigation_bar/curved_navigation_bar.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/widgets.dart';
 import 'package:news_app/screen/api_screen.dart';
+import 'package:news_app/screen/api_search.dart';
 
 class MainScreen extends StatefulWidget {
   const MainScreen({super.key});
@@ -12,7 +13,7 @@ class MainScreen extends StatefulWidget {
 }
 
 class _MainScreenState extends State<MainScreen> {
-  List<Widget> screen = [ScreenApi()];
+  List<Widget> screen = [ScreenApi(), SearchApi()];
 
   int selectedIndex = 0;
 
@@ -32,7 +33,7 @@ class _MainScreenState extends State<MainScreen> {
         },
         items: [
           Icon(Icons.home, size: 28, color: Colors.red[400]),
-          Icon(Icons.person, size: 28, color: Colors.red[400]),
+          Icon(Icons.search, size: 28, color: Colors.red[400]),
           Icon(Icons.favorite, size: 28, color: Colors.red[400]),
         ],
       ),
